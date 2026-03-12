@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mouse Heatmap Demo</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <h1>Explora la imagen</h1>
+  <p>Mueve el mouse sobre la imagen como si siguieras tu mirada. Al terminar, presiona “Mostrar mapa de calor”.</p>
+
+  <div id="wrapper">
+    <img id="stimulus" src="imagen.jpg" alt="Imagen de prueba" />
+    <div id="heatmap"></div>
+  </div>
+
+  <div class="controls">
+    <button id="startBtn">Iniciar</button>
+    <button id="showBtn">Mostrar mapa de calor</button>
+    <button id="clearBtn">Limpiar</button>
+    <button id="downloadBtn">Descargar datos JSON</button>
+  </div>
+
+  <script src="https://unpkg.com/heatmap.js@2.0.5/build/heatmap.min.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
