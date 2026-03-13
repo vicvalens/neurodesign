@@ -12,17 +12,15 @@ let tracking = false;
 let rawData = [];
 
 // Ajustes principales
-const BASE_RADIUS = 28;
-const EXTRA_RADIUS = 20;
-const MIN_DT = 8;
-const SPEED_LOW = 0.05;
-const SPEED_HIGH = 1.2;
-const STEP_SKIP = 1;
-
-// Menos trayecto, más fijación
-const TRAIL_WEIGHT = 0.02;
-const SLOW_WEIGHT_BOOST = 1.2;
-const STOP_WEIGHT_BOOST = 3.0;
+const BASE_RADIUS = 28;          // tamaño base de difusión
+const EXTRA_RADIUS = 20;         // crecimiento extra según peso
+const MIN_DT = 8;                // evita divisiones raras
+const SPEED_LOW = 0.05;          // muy lento
+const SPEED_HIGH = 1.2;          // rápido
+const STEP_SKIP = 1;             // 1 = usa todos los puntos
+const TRAIL_WEIGHT = 0.02;       // peso mínimo del recorrido
+const SLOW_WEIGHT_BOOST = 1.2;   // peso extra cuando va lento
+const STOP_WEIGHT_BOOST = 3.0;   // peso extra cuando casi se detiene
 
 function resizeCanvas() {
   const w = stimulus.clientWidth;
@@ -60,13 +58,13 @@ function lerp(a, b, t) {
 function colorAt(t) {
   const stops = [
     { t: 0.00, c: [0, 0, 0, 0] },
-    { t: 0.08, c: [35, 60, 255, 38] },
-    { t: 0.22, c: [0, 190, 255, 56] },
-    { t: 0.38, c: [0, 255, 170, 72] },
-    { t: 0.54, c: [60, 255, 60, 88] },
-    { t: 0.72, c: [255, 235, 0, 104] },
-    { t: 0.88, c: [255, 130, 0, 118] },
-    { t: 1.00, c: [255, 0, 0, 130] }
+    { t: 0.08, c: [35, 60, 255, 70] },   // azul
+    { t: 0.22, c: [0, 190, 255, 110] },  // cian
+    { t: 0.38, c: [0, 255, 170, 145] },  // turquesa-verde
+    { t: 0.54, c: [60, 255, 60, 175] },  // verde
+    { t: 0.72, c: [255, 235, 0, 205] },  // amarillo
+    { t: 0.88, c: [255, 130, 0, 225] },  // naranja
+    { t: 1.00, c: [255, 0, 0, 240] }     // rojo
   ];
 
   for (let i = 0; i < stops.length - 1; i++) {
@@ -95,10 +93,10 @@ function createAlphaStamp(radius, alphaStrength = 1.0) {
   const sctx = stamp.getContext("2d");
   const gradient = sctx.createRadialGradient(radius, radius, 0, radius, radius, radius);
 
-  gradient.addColorStop(0.0, `rgba(0,0,0,${0.11 * alphaStrength})`);
-  gradient.addColorStop(0.2, `rgba(0,0,0,${0.08 * alphaStrength})`);
-  gradient.addColorStop(0.45, `rgba(0,0,0,${0.05 * alphaStrength})`);
-  gradient.addColorStop(0.75, `rgba(0,0,0,${0.025 * alphaStrength})`);
+  gradient.addColorStop(0.0, `rgba(0,0,0,${0.22 * alphaStrength})`);
+  gradient.addColorStop(0.2, `rgba(0,0,0,${0.18 * alphaStrength})`);
+  gradient.addColorStop(0.45, `rgba(0,0,0,${0.11 * alphaStrength})`);
+  gradient.addColorStop(0.75, `rgba(0,0,0,${0.05 * alphaStrength})`);
   gradient.addColorStop(1.0, "rgba(0,0,0,0)");
 
   sctx.fillStyle = gradient;
@@ -120,27 +118,29 @@ function buildWeightedAttentionPoints(data) {
     const dy = curr.y - prev.y;
     const dist = Math.hypot(dx, dy);
     const dt = Math.max(MIN_DT, curr.t - prev.t);
-    const speed = dist / dt;
+    const speed = dist / dt; // px/ms
 
+    // normalización invertida: más lento = más peso
     const speedNorm = clamp((speed - SPEED_LOW) / (SPEED_HIGH - SPEED_LOW), 0, 1);
     const slowFactor = 1 - speedNorm;
 
-    let weight = 0;
+  let weight = 0;
 
-    // Solo puntos lentos
-    if (speed < 0.20) {
-      weight = TRAIL_WEIGHT + slowFactor * SLOW_WEIGHT_BOOST;
-    }
+  // solo deja algo de calor si el cursor va realmente lento
+  if (speed < 0.20) {
+    weight = TRAIL_WEIGHT + slowFactor * SLOW_WEIGHT_BOOST;
+  }
 
-    // Casi quieto
-    if (speed < 0.08) {
-      weight += STOP_WEIGHT_BOOST;
-    }
+  // casi quieto = mucho más peso
+  if (speed < 0.08) {
+    weight += STOP_WEIGHT_BOOST;
+  }
 
+  // descarta puntos con muy poco peso para evitar caminos
+  if (weight < 0.08) continue;
+
+    // también cuenta el tiempo transcurrido
     weight *= clamp(dt / 16, 0.7, 2.5);
-
-    // Descarta trayecto residual
-    if (weight < 0.08) continue;
 
     weighted.push({
       x: curr.x,
@@ -167,15 +167,20 @@ function renderContinuousHeatmap(weightedPoints) {
 
   weightedPoints.forEach((p) => {
     const ratio = p.weight / maxWeight;
+
+    // radio variable: lento y pesado = más grande
     const radius = Math.round(BASE_RADIUS + ratio * EXTRA_RADIUS);
-    const alphaStrength = 0.35 + ratio * 1.2;
+
+    // alpha más visible y continua
+    const alphaStrength = 0.45 + ratio * 1.8;
 
     const stamp = createAlphaStamp(radius, alphaStrength);
     offCtx.drawImage(stamp, p.x - radius, p.y - radius);
 
-    if (ratio > 0.55) {
-      const coreRadius = Math.round(radius * 0.38);
-      const coreStamp = createAlphaStamp(coreRadius, 0.9 + ratio * 1.2);
+    // núcleo adicional para zonas realmente atendidas
+    if (ratio > 0.45) {
+      const coreRadius = Math.round(radius * 0.42);
+      const coreStamp = createAlphaStamp(coreRadius, 1.1 + ratio * 1.6);
       offCtx.drawImage(coreStamp, p.x - coreRadius, p.y - coreRadius);
     }
   });
@@ -194,8 +199,8 @@ function renderContinuousHeatmap(weightedPoints) {
 
     let t = alpha / maxAlpha;
 
-    // Mantiene colores medios visibles
-    t = Math.pow(t, 0.68);
+    // Curva para abrir más rango medio y mostrar más arcoíris
+    t = Math.pow(t, 0.62);
 
     const [r, g, b, a] = colorAt(t);
     data[i] = r;
