@@ -12,17 +12,17 @@ let tracking = false;
 let rawData = [];
 
 // Ajustes principales
-const BASE_RADIUS = 28;
-const EXTRA_RADIUS = 20;
+const BASE_RADIUS = 34;
+const EXTRA_RADIUS = 16;
 const MIN_DT = 8;
 const SPEED_LOW = 0.05;
 const SPEED_HIGH = 1.2;
 const STEP_SKIP = 1;
 
 // Menos trayecto, más fijación
-const TRAIL_WEIGHT = 0.02;
-const SLOW_WEIGHT_BOOST = 1.2;
-const STOP_WEIGHT_BOOST = 3.0;
+const TRAIL_WEIGHT = 0.00;
+const SLOW_WEIGHT_BOOST = 0.9;
+const STOP_WEIGHT_BOOST = 2.2;
 
 function resizeCanvas() {
   const w = stimulus.clientWidth;
