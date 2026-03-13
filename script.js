@@ -11,196 +11,133 @@ const downloadBtn = document.getElementById("downloadBtn");
 let tracking = false;
 let rawData = [];
 
-// Ajustes principales
-const GRID_SIZE = 10;     // más pequeño = más detalle local
-const BASE_RADIUS = 42;   // más grande = más mezcla
-const SAMPLE_STEP = 1;    // 1 = usa todos los puntos
+// --- CONFIGURACIÓN DE ANÁLISIS ---
+const GRID_SIZE = 8;       // Tamaño de celda para agrupar puntos
+const BASE_RADIUS = 35;    // Radio de la "fijación" (área de la fóvea)
+const BLUR_STRENGTH = 25;  // Difuminado para homogeneizar zonas
 
 function resizeCanvas() {
-  const w = stimulus.clientWidth;
-  const h = stimulus.clientHeight;
-
-  if (!w || !h) return;
-
-  canvas.width = w;
-  canvas.height = h;
-  canvas.style.width = `${w}px`;
-  canvas.style.height = `${h}px`;
-}
-
-function clearHeatmap() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const w = stimulus.clientWidth;
+    const h = stimulus.clientHeight;
+    if (!w || !h) return;
+    canvas.width = w;
+    canvas.height = h;
 }
 
 function getRelativePosition(event) {
-  const rect = stimulus.getBoundingClientRect();
-  const x = event.clientX - rect.left;
-  const y = event.clientY - rect.top;
-
-  if (x < 0 || y < 0 || x > rect.width || y > rect.height) return null;
-  return { x, y };
+    const rect = stimulus.getBoundingClientRect();
+    return {
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top
+    };
 }
 
-function aggregatePoints(data, gridSize = GRID_SIZE) {
-  const map = {};
+// 1. Crear la tira de colores profesional (Gradiente de Temperatura)
+function getHeatmapGradient() {
+    const gradCanvas = document.createElement("canvas");
+    gradCanvas.width = 1;
+    gradCanvas.height = 256;
+    const gCtx = gradCanvas.getContext("2d");
 
-  for (let i = 0; i < data.length; i += SAMPLE_STEP) {
-    const p = data[i];
-    const gx = Math.round(p.x / gridSize) * gridSize;
-    const gy = Math.round(p.y / gridSize) * gridSize;
-    const key = `${gx}_${gy}`;
+    const gradient = gCtx.createLinearGradient(0, 0, 0, 256);
+    gradient.addColorStop(0.1, "rgba(0, 0, 255, 0)"); // Transparente
+    gradient.addColorStop(0.2, "blue");
+    gradient.addColorStop(0.4, "cyan");
+    gradient.addColorStop(0.6, "lime");
+    gradient.addColorStop(0.8, "yellow");
+    gradient.addColorStop(1.0, "red");
 
-    if (!map[key]) {
-      map[key] = { x: gx, y: gy, value: 0 };
+    gCtx.fillStyle = gradient;
+    gCtx.fillRect(0, 0, 1, 256);
+    return gCtx.getImageData(0, 0, 1, 256).data;
+}
+
+function drawHeatmap() {
+    if (!rawData.length) return;
+
+    // A. Agrupar puntos por rejilla para densidad
+    const map = {};
+    rawData.forEach(p => {
+        const gx = Math.round(p.x / GRID_SIZE) * GRID_SIZE;
+        const gy = Math.round(p.y / GRID_SIZE) * GRID_SIZE;
+        const key = `${gx}_${gy}`;
+        if (!map[key]) map[key] = { x: gx, y: gy, value: 0 };
+        map[key].value += 1;
+    });
+    const points = Object.values(map);
+    const maxValue = Math.max(...points.map(p => p.value));
+
+    // B. Crear canvas temporal de sombras
+    const tempCanvas = document.createElement("canvas");
+    tempCanvas.width = canvas.width;
+    tempCanvas.height = canvas.height;
+    const tCtx = tempCanvas.getContext("2d");
+
+    tCtx.shadowBlur = BLUR_STRENGTH;
+    tCtx.shadowColor = "black";
+
+    points.forEach(p => {
+        const intensity = p.value / maxValue;
+        tCtx.globalAlpha = intensity;
+        tCtx.beginPath();
+        tCtx.arc(p.x, p.y, BASE_RADIUS, 0, Math.PI * 2);
+        tCtx.fill();
+    });
+
+    // C. Colorear píxel por píxel basado en la densidad
+    const imgData = tCtx.getImageData(0, 0, canvas.width, canvas.height);
+    const pix = imgData.data;
+    const palette = getHeatmapGradient();
+
+    for (let i = 0; i < pix.length; i += 4) {
+        const alpha = pix[i + 3]; // La sombra acumulada define el color
+        if (alpha > 0) {
+            const offset = alpha * 4;
+            pix[i] = palette[offset];     // R
+            pix[i + 1] = palette[offset + 1]; // G
+            pix[i + 2] = palette[offset + 2]; // B
+            pix[i + 3] = alpha * 0.9;         // Suavizar transparencia final
+        }
     }
-
-    map[key].value += 1;
-  }
-
-  return Object.values(map);
+    ctx.putImageData(imgData, 0, 0);
 }
 
-function getColorsForRatio(ratio) {
-  if (ratio < 0.2) {
-    return {
-      center: "rgba(0, 80, 255, 0.30)",
-      mid: "rgba(0, 80, 255, 0.18)"
-    };
-  }
-
-  if (ratio < 0.4) {
-    return {
-      center: "rgba(0, 220, 255, 0.40)",
-      mid: "rgba(0, 220, 255, 0.22)"
-    };
-  }
-
-  if (ratio < 0.6) {
-    return {
-      center: "rgba(0, 255, 120, 0.48)",
-      mid: "rgba(0, 255, 120, 0.26)"
-    };
-  }
-
-  if (ratio < 0.8) {
-    return {
-      center: "rgba(255, 240, 0, 0.56)",
-      mid: "rgba(255, 240, 0, 0.30)"
-    };
-  }
-
-  return {
-    center: "rgba(255, 60, 0, 0.68)",
-    mid: "rgba(255, 60, 0, 0.36)"
-  };
-}
-
-function drawBlob(x, y, radius, centerColor, midColor) {
-  const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
-  gradient.addColorStop(0, centerColor);
-  gradient.addColorStop(0.45, midColor);
-  gradient.addColorStop(1, "rgba(255,255,255,0)");
-
-  ctx.fillStyle = gradient;
-  ctx.beginPath();
-  ctx.arc(x, y, radius, 0, Math.PI * 2);
-  ctx.fill();
-}
-
-function drawHeatmap(points) {
-  clearHeatmap();
-
-  if (!points.length) return;
-
-  const maxValue = Math.max(...points.map((p) => p.value), 1);
-
-  // Capa base suave para unir mejor las zonas
-  points.forEach((p) => {
-    const ratio = p.value / maxValue;
-    const colors = getColorsForRatio(ratio);
-
-    drawBlob(
-      p.x,
-      p.y,
-      BASE_RADIUS,
-      colors.center,
-      colors.mid
-    );
-  });
-
-  // Segunda capa más compacta para reforzar núcleos
-  points.forEach((p) => {
-    const ratio = p.value / maxValue;
-    const colors = getColorsForRatio(Math.min(1, ratio * 1.15));
-
-    drawBlob(
-      p.x,
-      p.y,
-      BASE_RADIUS * 0.55,
-      colors.center.replace(/0\.\d+\)$/, "0.75)"),
-      colors.mid.replace(/0\.\d+\)$/, "0.42)")
-    );
-  });
-}
-
-stimulus.addEventListener("load", resizeCanvas);
-window.addEventListener("resize", resizeCanvas);
-
-wrapper.addEventListener("mousemove", (event) => {
-  if (!tracking) return;
-
-  const pos = getRelativePosition(event);
-  if (!pos) return;
-
-  rawData.push({
-    x: Math.round(pos.x),
-    y: Math.round(pos.y),
-    t: performance.now()
-  });
+// Eventos
+wrapper.addEventListener("mousemove", (e) => {
+    if (!tracking) return;
+    const pos = getRelativePosition(e);
+    if (pos.x >= 0 && pos.x <= stimulus.clientWidth && pos.y >= 0 && pos.y <= stimulus.clientHeight) {
+        rawData.push({ x: pos.x, y: pos.y });
+    }
 });
 
 startBtn.addEventListener("click", () => {
-  tracking = true;
-  rawData = [];
-  clearHeatmap();
-  alert("Registro iniciado");
+    tracking = true;
+    rawData = [];
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    console.log("Grabación iniciada...");
 });
 
 showBtn.addEventListener("click", () => {
-  if (!rawData.length) {
-    alert("No hay datos registrados.");
-    return;
-  }
-
-  const aggregated = aggregatePoints(rawData, GRID_SIZE);
-  drawHeatmap(aggregated);
+    tracking = false;
+    drawHeatmap();
 });
 
 clearBtn.addEventListener("click", () => {
-  tracking = false;
-  rawData = [];
-  clearHeatmap();
+    tracking = false;
+    rawData = [];
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 });
 
 downloadBtn.addEventListener("click", () => {
-  const data = {
-    image: stimulus.getAttribute("src"),
-    timestamp: new Date().toISOString(),
-    raw_mouse_data: rawData
-  };
-
-  const blob = new Blob([JSON.stringify(data, null, 2)], {
-    type: "application/json"
-  });
-
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "mouse_heatmap_data.json";
-  a.click();
-  URL.revokeObjectURL(url);
+    const data = JSON.stringify({ points: rawData });
+    const blob = new Blob([data], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "heatmap_data.json";
+    a.click();
 });
 
-if (stimulus.complete) {
-  resizeCanvas();
-}
+window.addEventListener("load", resizeCanvas);
+window.addEventListener("resize", resizeCanvas);

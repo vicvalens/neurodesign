@@ -1,20 +1,23 @@
 body {
-  font-family: Arial, sans-serif;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   margin: 24px;
   text-align: center;
-  background: #f2f2f2;
+  background: #f8f9fa;
+  color: #333;
 }
 
 #wrapper {
   position: relative;
   display: inline-block;
   margin-top: 20px;
+  border: 1px solid #ccc;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.1);
   line-height: 0;
 }
 
 #stimulus {
   display: block;
-  width: 900px;
+  width: 900px; /* Ajustado a tu captura */
   max-width: 100%;
   height: auto;
 }
@@ -23,17 +26,33 @@ body {
   position: absolute;
   top: 0;
   left: 0;
-  pointer-events: none;
+  pointer-events: none; /* Crucial para no bloquear el mousemove del padre */
   z-index: 20;
+  /* El modo multiply hace que el heatmap parezca impreso sobre el papel */
+  mix-blend-mode: multiply; 
+  opacity: 0.85;
 }
 
 .controls {
-  margin-top: 20px;
+  margin-top: 25px;
 }
 
 button {
-  margin: 6px;
-  padding: 10px 16px;
-  font-size: 16px;
+  margin: 5px;
+  padding: 12px 20px;
+  font-size: 14px;
+  font-weight: bold;
+  color: #fff;
+  background-color: #007bff;
+  border: none;
+  border-radius: 4px;
   cursor: pointer;
+  transition: background 0.3s;
 }
+
+button:hover {
+  background-color: #0056b3;
+}
+
+#clearBtn { background-color: #6c757d; }
+#downloadBtn { background-color: #28a745; }
