@@ -18,9 +18,9 @@ const MIN_DT = 8;                // evita divisiones raras
 const SPEED_LOW = 0.05;          // muy lento
 const SPEED_HIGH = 1.2;          // rápido
 const STEP_SKIP = 1;             // 1 = usa todos los puntos
-const TRAIL_WEIGHT = 0.10;       // peso mínimo del recorrido
-const SLOW_WEIGHT_BOOST = 1.4;   // peso extra cuando va lento
-const STOP_WEIGHT_BOOST = 2.2;   // peso extra cuando casi se detiene
+const TRAIL_WEIGHT = 0.02;       // peso mínimo del recorrido
+const SLOW_WEIGHT_BOOST = 1.2;   // peso extra cuando va lento
+const STOP_WEIGHT_BOOST = 3.0;   // peso extra cuando casi se detiene
 
 function resizeCanvas() {
   const w = stimulus.clientWidth;
@@ -124,12 +124,20 @@ function buildWeightedAttentionPoints(data) {
     const speedNorm = clamp((speed - SPEED_LOW) / (SPEED_HIGH - SPEED_LOW), 0, 1);
     const slowFactor = 1 - speedNorm;
 
-    let weight = TRAIL_WEIGHT + slowFactor * SLOW_WEIGHT_BOOST;
+  let weight = 0;
 
-    // casi quieto => peso mucho mayor
-    if (speed < 0.08) {
-      weight += STOP_WEIGHT_BOOST;
-    }
+  // solo deja algo de calor si el cursor va realmente lento
+  if (speed < 0.20) {
+    weight = TRAIL_WEIGHT + slowFactor * SLOW_WEIGHT_BOOST;
+  }
+
+  // casi quieto = mucho más peso
+  if (speed < 0.08) {
+    weight += STOP_WEIGHT_BOOST;
+  }
+
+  // descarta puntos con muy poco peso para evitar caminos
+  if (weight < 0.08) continue;
 
     // también cuenta el tiempo transcurrido
     weight *= clamp(dt / 16, 0.7, 2.5);
