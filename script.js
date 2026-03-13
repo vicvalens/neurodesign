@@ -132,33 +132,33 @@ function mergeNearbyFixations(fixations, mergeRadius = 45) {
 }
 
 function getColorsForRatio(ratio) {
-  if (ratio < 0.2) {
+  if (ratio < 0.15) {
     return {
-      center: "rgba(0, 90, 255, 0.18)",
-      mid: "rgba(0, 90, 255, 0.10)"
+      center: "rgba(0, 90, 255, 0.30)",
+      mid: "rgba(0, 90, 255, 0.16)"
     };
   }
-  if (ratio < 0.4) {
+  if (ratio < 0.35) {
     return {
-      center: "rgba(0, 220, 255, 0.30)",
-      mid: "rgba(0, 220, 255, 0.16)"
+      center: "rgba(0, 220, 255, 0.42)",
+      mid: "rgba(0, 220, 255, 0.22)"
     };
   }
-  if (ratio < 0.6) {
+  if (ratio < 0.55) {
     return {
-      center: "rgba(0, 255, 120, 0.42)",
-      mid: "rgba(0, 255, 120, 0.22)"
+      center: "rgba(0, 255, 120, 0.52)",
+      mid: "rgba(0, 255, 120, 0.28)"
     };
   }
-  if (ratio < 0.8) {
+  if (ratio < 0.75) {
     return {
-      center: "rgba(255, 235, 0, 0.60)",
-      mid: "rgba(255, 235, 0, 0.30)"
+      center: "rgba(255, 235, 0, 0.68)",
+      mid: "rgba(255, 235, 0, 0.34)"
     };
   }
   return {
-    center: "rgba(255, 60, 0, 0.85)",
-    mid: "rgba(255, 60, 0, 0.42)"
+    center: "rgba(255, 60, 0, 0.86)",
+    mid: "rgba(255, 60, 0, 0.44)"
   };
 }
 
@@ -184,7 +184,7 @@ function drawHeatmapFromFixations(fixationData) {
     const ratio = f.duration / maxDuration;
     const colors = getColorsForRatio(ratio);
 
-    const radius = HEAT_RADIUS + Math.min(25, ratio * 20);
+    const radius = HEAT_RADIUS + Math.min(18, ratio * 12);
 
     drawBlob(f.x, f.y, radius, colors.center, colors.mid);
     drawBlob(
@@ -260,7 +260,7 @@ showBtn.addEventListener("click", () => {
 
   finalizeCluster(performance.now());
 
-  const mergedFixations = mergeNearbyFixations(fixations, 50);
+  const mergedFixations = mergeNearbyFixations(fixations, 32);
 
   if (!mergedFixations.length) {
     alert("No se detectaron fijaciones suficientes. Muévete más lento o haz pausas más claras.");
