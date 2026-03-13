@@ -12,7 +12,7 @@ let tracking = false;
 let rawData = [];
 
 // Ajustes principales
-const BASE_RADIUS = 25;          // tamaño base de difusión
+const BASE_RADIUS = 28;          // tamaño base de difusión
 const EXTRA_RADIUS = 20;         // crecimiento extra según peso
 const MIN_DT = 8;                // evita divisiones raras
 const SPEED_LOW = 0.05;          // muy lento
