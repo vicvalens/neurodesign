@@ -10,134 +10,301 @@ const downloadBtn = document.getElementById("downloadBtn");
 
 let tracking = false;
 let rawData = [];
+let fixationCandidates = [];
+let fixations = [];
 
-// --- CONFIGURACIÓN DE ANÁLISIS ---
-const GRID_SIZE = 8;       // Tamaño de celda para agrupar puntos
-const BASE_RADIUS = 35;    // Radio de la "fijación" (área de la fóvea)
-const BLUR_STRENGTH = 25;  // Difuminado para homogeneizar zonas
+let lastPoint = null;
+let clusterStartTime = null;
+let clusterPoints = [];
+
+/*
+  AJUSTES CLAVE
+  ----------------
+  FIXATION_RADIUS: qué tan cerca debe quedarse el cursor para considerarlo
+  una misma fijación.
+  MIN_FIXATION_MS: tiempo mínimo para aceptar una fijación.
+  HEAT_RADIUS: tamaño visual de cada fijación en el mapa.
+*/
+
+const FIXATION_RADIUS = 35;
+const MIN_FIXATION_MS = 220;
+const HEAT_RADIUS = 55;
 
 function resizeCanvas() {
-    const w = stimulus.clientWidth;
-    const h = stimulus.clientHeight;
-    if (!w || !h) return;
-    canvas.width = w;
-    canvas.height = h;
+  const w = stimulus.clientWidth;
+  const h = stimulus.clientHeight;
+
+  if (!w || !h) return;
+
+  canvas.width = w;
+  canvas.height = h;
+  canvas.style.width = `${w}px`;
+  canvas.style.height = `${h}px`;
+}
+
+function clearHeatmap() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 }
 
 function getRelativePosition(event) {
-    const rect = stimulus.getBoundingClientRect();
+  const rect = stimulus.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+
+  if (x < 0 || y < 0 || x > rect.width || y > rect.height) return null;
+  return { x, y };
+}
+
+function distance(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function averagePoint(points) {
+  const sum = points.reduce(
+    (acc, p) => {
+      acc.x += p.x;
+      acc.y += p.y;
+      return acc;
+    },
+    { x: 0, y: 0 }
+  );
+
+  return {
+    x: sum.x / points.length,
+    y: sum.y / points.length
+  };
+}
+
+function finalizeCluster(endTime) {
+  if (!clusterPoints.length || clusterStartTime === null) return;
+
+  const duration = endTime - clusterStartTime;
+
+  fixationCandidates.push({
+    points: [...clusterPoints],
+    duration
+  });
+
+  if (duration >= MIN_FIXATION_MS) {
+    const center = averagePoint(clusterPoints);
+
+    fixations.push({
+      x: Math.round(center.x),
+      y: Math.round(center.y),
+      duration
+    });
+  }
+
+  clusterPoints = [];
+  clusterStartTime = null;
+}
+
+function mergeNearbyFixations(fixations, mergeRadius = 45) {
+  const merged = [];
+
+  fixations.forEach((fix) => {
+    const existing = merged.find((m) => {
+      const d = Math.hypot(m.x - fix.x, m.y - fix.y);
+      return d <= mergeRadius;
+    });
+
+    if (existing) {
+      const totalWeight = existing.duration + fix.duration;
+      existing.x = Math.round(
+        (existing.x * existing.duration + fix.x * fix.duration) / totalWeight
+      );
+      existing.y = Math.round(
+        (existing.y * existing.duration + fix.y * fix.duration) / totalWeight
+      );
+      existing.duration += fix.duration;
+      existing.count += 1;
+    } else {
+      merged.push({
+        x: fix.x,
+        y: fix.y,
+        duration: fix.duration,
+        count: 1
+      });
+    }
+  });
+
+  return merged;
+}
+
+function getColorsForRatio(ratio) {
+  if (ratio < 0.2) {
     return {
-        x: event.clientX - rect.left,
-        y: event.clientY - rect.top
+      center: "rgba(0, 90, 255, 0.18)",
+      mid: "rgba(0, 90, 255, 0.10)"
     };
+  }
+  if (ratio < 0.4) {
+    return {
+      center: "rgba(0, 220, 255, 0.30)",
+      mid: "rgba(0, 220, 255, 0.16)"
+    };
+  }
+  if (ratio < 0.6) {
+    return {
+      center: "rgba(0, 255, 120, 0.42)",
+      mid: "rgba(0, 255, 120, 0.22)"
+    };
+  }
+  if (ratio < 0.8) {
+    return {
+      center: "rgba(255, 235, 0, 0.60)",
+      mid: "rgba(255, 235, 0, 0.30)"
+    };
+  }
+  return {
+    center: "rgba(255, 60, 0, 0.85)",
+    mid: "rgba(255, 60, 0, 0.42)"
+  };
 }
 
-// 1. Crear la tira de colores profesional (Gradiente de Temperatura)
-function getHeatmapGradient() {
-    const gradCanvas = document.createElement("canvas");
-    gradCanvas.width = 1;
-    gradCanvas.height = 256;
-    const gCtx = gradCanvas.getContext("2d");
+function drawBlob(x, y, radius, centerColor, midColor) {
+  const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
+  gradient.addColorStop(0, centerColor);
+  gradient.addColorStop(0.42, midColor);
+  gradient.addColorStop(1, "rgba(255,255,255,0)");
 
-    const gradient = gCtx.createLinearGradient(0, 0, 0, 256);
-    gradient.addColorStop(0.1, "rgba(0, 0, 255, 0)"); // Transparente
-    gradient.addColorStop(0.2, "blue");
-    gradient.addColorStop(0.4, "cyan");
-    gradient.addColorStop(0.6, "lime");
-    gradient.addColorStop(0.8, "yellow");
-    gradient.addColorStop(1.0, "red");
-
-    gCtx.fillStyle = gradient;
-    gCtx.fillRect(0, 0, 1, 256);
-    return gCtx.getImageData(0, 0, 1, 256).data;
+  ctx.fillStyle = gradient;
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.fill();
 }
 
-function drawHeatmap() {
-    if (!rawData.length) return;
+function drawHeatmapFromFixations(fixationData) {
+  clearHeatmap();
+  if (!fixationData.length) return;
 
-    // A. Agrupar puntos por rejilla para densidad
-    const map = {};
-    rawData.forEach(p => {
-        const gx = Math.round(p.x / GRID_SIZE) * GRID_SIZE;
-        const gy = Math.round(p.y / GRID_SIZE) * GRID_SIZE;
-        const key = `${gx}_${gy}`;
-        if (!map[key]) map[key] = { x: gx, y: gy, value: 0 };
-        map[key].value += 1;
-    });
-    const points = Object.values(map);
-    const maxValue = Math.max(...points.map(p => p.value));
+  const maxDuration = Math.max(...fixationData.map((f) => f.duration), 1);
 
-    // B. Crear canvas temporal de sombras
-    const tempCanvas = document.createElement("canvas");
-    tempCanvas.width = canvas.width;
-    tempCanvas.height = canvas.height;
-    const tCtx = tempCanvas.getContext("2d");
+  fixationData.forEach((f) => {
+    const ratio = f.duration / maxDuration;
+    const colors = getColorsForRatio(ratio);
 
-    tCtx.shadowBlur = BLUR_STRENGTH;
-    tCtx.shadowColor = "black";
+    const radius = HEAT_RADIUS + Math.min(25, ratio * 20);
 
-    points.forEach(p => {
-        const intensity = p.value / maxValue;
-        tCtx.globalAlpha = intensity;
-        tCtx.beginPath();
-        tCtx.arc(p.x, p.y, BASE_RADIUS, 0, Math.PI * 2);
-        tCtx.fill();
-    });
-
-    // C. Colorear píxel por píxel basado en la densidad
-    const imgData = tCtx.getImageData(0, 0, canvas.width, canvas.height);
-    const pix = imgData.data;
-    const palette = getHeatmapGradient();
-
-    for (let i = 0; i < pix.length; i += 4) {
-        const alpha = pix[i + 3]; // La sombra acumulada define el color
-        if (alpha > 0) {
-            const offset = alpha * 4;
-            pix[i] = palette[offset];     // R
-            pix[i + 1] = palette[offset + 1]; // G
-            pix[i + 2] = palette[offset + 2]; // B
-            pix[i + 3] = alpha * 0.9;         // Suavizar transparencia final
-        }
-    }
-    ctx.putImageData(imgData, 0, 0);
+    drawBlob(f.x, f.y, radius, colors.center, colors.mid);
+    drawBlob(
+      f.x,
+      f.y,
+      radius * 0.55,
+      colors.center.replace(/0\.\d+\)/, "0.92)"),
+      colors.mid.replace(/0\.\d+\)/, "0.52)")
+    );
+  });
 }
 
-// Eventos
-wrapper.addEventListener("mousemove", (e) => {
-    if (!tracking) return;
-    const pos = getRelativePosition(e);
-    if (pos.x >= 0 && pos.x <= stimulus.clientWidth && pos.y >= 0 && pos.y <= stimulus.clientHeight) {
-        rawData.push({ x: pos.x, y: pos.y });
-    }
+stimulus.addEventListener("load", resizeCanvas);
+window.addEventListener("resize", resizeCanvas);
+
+wrapper.addEventListener("mousemove", (event) => {
+  if (!tracking) return;
+
+  const pos = getRelativePosition(event);
+  if (!pos) return;
+
+  const now = performance.now();
+
+  rawData.push({
+    x: Math.round(pos.x),
+    y: Math.round(pos.y),
+    t: now
+  });
+
+  if (!lastPoint) {
+    lastPoint = pos;
+    clusterStartTime = now;
+    clusterPoints = [pos];
+    return;
+  }
+
+  const d = distance(lastPoint, pos);
+
+  if (d <= FIXATION_RADIUS) {
+    clusterPoints.push(pos);
+  } else {
+    finalizeCluster(now);
+    clusterStartTime = now;
+    clusterPoints = [pos];
+  }
+
+  lastPoint = pos;
+});
+
+wrapper.addEventListener("mouseleave", () => {
+  if (!tracking) return;
+  finalizeCluster(performance.now());
+  lastPoint = null;
 });
 
 startBtn.addEventListener("click", () => {
-    tracking = true;
-    rawData = [];
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    console.log("Grabación iniciada...");
+  tracking = true;
+  rawData = [];
+  fixationCandidates = [];
+  fixations = [];
+  lastPoint = null;
+  clusterStartTime = null;
+  clusterPoints = [];
+  clearHeatmap();
+  alert("Registro iniciado");
 });
 
 showBtn.addEventListener("click", () => {
-    tracking = false;
-    drawHeatmap();
+  if (!rawData.length) {
+    alert("No hay datos registrados.");
+    return;
+  }
+
+  finalizeCluster(performance.now());
+
+  const mergedFixations = mergeNearbyFixations(fixations, 50);
+
+  if (!mergedFixations.length) {
+    alert("No se detectaron fijaciones suficientes. Muévete más lento o haz pausas más claras.");
+    return;
+  }
+
+  drawHeatmapFromFixations(mergedFixations);
 });
 
 clearBtn.addEventListener("click", () => {
-    tracking = false;
-    rawData = [];
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  tracking = false;
+  rawData = [];
+  fixationCandidates = [];
+  fixations = [];
+  lastPoint = null;
+  clusterStartTime = null;
+  clusterPoints = [];
+  clearHeatmap();
 });
 
 downloadBtn.addEventListener("click", () => {
-    const data = JSON.stringify({ points: rawData });
-    const blob = new Blob([data], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "heatmap_data.json";
-    a.click();
+  finalizeCluster(performance.now());
+
+  const data = {
+    image: stimulus.getAttribute("src"),
+    timestamp: new Date().toISOString(),
+    raw_mouse_data: rawData,
+    fixation_candidates: fixationCandidates,
+    accepted_fixations: fixations,
+    merged_fixations: mergeNearbyFixations(fixations, 50)
+  };
+
+  const blob = new Blob([JSON.stringify(data, null, 2)], {
+    type: "application/json"
+  });
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "mouse_fixation_heatmap_data.json";
+  a.click();
+  URL.revokeObjectURL(url);
 });
 
-window.addEventListener("load", resizeCanvas);
-window.addEventListener("resize", resizeCanvas);
+if (stimulus.complete) {
+  resizeCanvas();
+}
