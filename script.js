@@ -10,25 +10,20 @@ const downloadBtn = document.getElementById("downloadBtn");
 
 let tracking = false;
 let rawData = [];
-let fixationCandidates = [];
-let fixations = [];
+let weightedPoints = [];
 
 let lastPoint = null;
 let clusterStartTime = null;
 let clusterPoints = [];
 
 /*
-  AJUSTES CLAVE
-  ----------------
-  FIXATION_RADIUS: qué tan cerca debe quedarse el cursor para considerarlo
-  una misma fijación.
-  MIN_FIXATION_MS: tiempo mínimo para aceptar una fijación.
-  HEAT_RADIUS: tamaño visual de cada fijación en el mapa.
+  AJUSTES
 */
-
-const FIXATION_RADIUS = 35;
-const MIN_FIXATION_MS = 220;
-const HEAT_RADIUS = 55;
+const FIXATION_RADIUS = 34;     // radio espacial para agrupar permanencia
+const MIN_FIXATION_MS = 90;     // mínimo para aceptar microfijaciones
+const MERGE_RADIUS = 42;        // fusiona fijaciones cercanas
+const BASE_HEAT_RADIUS = 85;    // tamaño base del heatmap visual
+const MAX_EXTRA_RADIUS = 45;    // expansión extra según intensidad
 
 function resizeCanvas() {
   const w = stimulus.clientWidth;
@@ -79,19 +74,14 @@ function finalizeCluster(endTime) {
   if (!clusterPoints.length || clusterStartTime === null) return;
 
   const duration = endTime - clusterStartTime;
-
-  fixationCandidates.push({
-    points: [...clusterPoints],
-    duration
-  });
+  const center = averagePoint(clusterPoints);
 
   if (duration >= MIN_FIXATION_MS) {
-    const center = averagePoint(clusterPoints);
-
-    fixations.push({
+    weightedPoints.push({
       x: Math.round(center.x),
       y: Math.round(center.y),
-      duration
+      duration,
+      samples: clusterPoints.length
     });
   }
 
@@ -99,31 +89,31 @@ function finalizeCluster(endTime) {
   clusterStartTime = null;
 }
 
-function mergeNearbyFixations(fixations, mergeRadius = 45) {
+function mergeNearbyFixations(points, mergeRadius = MERGE_RADIUS) {
   const merged = [];
 
-  fixations.forEach((fix) => {
+  points.forEach((fix) => {
     const existing = merged.find((m) => {
       const d = Math.hypot(m.x - fix.x, m.y - fix.y);
       return d <= mergeRadius;
     });
 
     if (existing) {
-      const totalWeight = existing.duration + fix.duration;
+      const totalWeight = existing.weight + fix.duration;
       existing.x = Math.round(
-        (existing.x * existing.duration + fix.x * fix.duration) / totalWeight
+        (existing.x * existing.weight + fix.x * fix.duration) / totalWeight
       );
       existing.y = Math.round(
-        (existing.y * existing.duration + fix.y * fix.duration) / totalWeight
+        (existing.y * existing.weight + fix.y * fix.duration) / totalWeight
       );
-      existing.duration += fix.duration;
-      existing.count += 1;
+      existing.weight += fix.duration;
+      existing.samples += fix.samples || 1;
     } else {
       merged.push({
         x: fix.x,
         y: fix.y,
-        duration: fix.duration,
-        count: 1
+        weight: fix.duration,
+        samples: fix.samples || 1
       });
     }
   });
@@ -131,70 +121,114 @@ function mergeNearbyFixations(fixations, mergeRadius = 45) {
   return merged;
 }
 
-function getColorsForRatio(ratio) {
-  if (ratio < 0.15) {
-    return {
-      center: "rgba(0, 90, 255, 0.30)",
-      mid: "rgba(0, 90, 255, 0.16)"
-    };
-  }
-  if (ratio < 0.35) {
-    return {
-      center: "rgba(0, 220, 255, 0.42)",
-      mid: "rgba(0, 220, 255, 0.22)"
-    };
-  }
-  if (ratio < 0.55) {
-    return {
-      center: "rgba(0, 255, 120, 0.52)",
-      mid: "rgba(0, 255, 120, 0.28)"
-    };
-  }
-  if (ratio < 0.75) {
-    return {
-      center: "rgba(255, 235, 0, 0.68)",
-      mid: "rgba(255, 235, 0, 0.34)"
-    };
-  }
-  return {
-    center: "rgba(255, 60, 0, 0.86)",
-    mid: "rgba(255, 60, 0, 0.44)"
-  };
+function createAlphaStamp(radius, alphaStrength = 1.0) {
+  const stamp = document.createElement("canvas");
+  const size = radius * 2;
+  stamp.width = size;
+  stamp.height = size;
+
+  const sctx = stamp.getContext("2d");
+  const gradient = sctx.createRadialGradient(radius, radius, 0, radius, radius, radius);
+
+  gradient.addColorStop(0.0, `rgba(0,0,0,${0.28 * alphaStrength})`);
+  gradient.addColorStop(0.2, `rgba(0,0,0,${0.22 * alphaStrength})`);
+  gradient.addColorStop(0.45, `rgba(0,0,0,${0.14 * alphaStrength})`);
+  gradient.addColorStop(0.7, `rgba(0,0,0,${0.07 * alphaStrength})`);
+  gradient.addColorStop(1.0, "rgba(0,0,0,0)");
+
+  sctx.fillStyle = gradient;
+  sctx.fillRect(0, 0, size, size);
+
+  return stamp;
 }
 
-function drawBlob(x, y, radius, centerColor, midColor) {
-  const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
-  gradient.addColorStop(0, centerColor);
-  gradient.addColorStop(0.42, midColor);
-  gradient.addColorStop(1, "rgba(255,255,255,0)");
-
-  ctx.fillStyle = gradient;
-  ctx.beginPath();
-  ctx.arc(x, y, radius, 0, Math.PI * 2);
-  ctx.fill();
+function lerp(a, b, t) {
+  return a + (b - a) * t;
 }
 
-function drawHeatmapFromFixations(fixationData) {
+function colorAt(t) {
+  const stops = [
+    { t: 0.00, c: [0, 0, 0, 0] },
+    { t: 0.08, c: [0, 60, 255, 70] },
+    { t: 0.22, c: [0, 160, 255, 110] },
+    { t: 0.40, c: [0, 255, 180, 145] },
+    { t: 0.58, c: [120, 255, 0, 170] },
+    { t: 0.74, c: [255, 230, 0, 200] },
+    { t: 0.88, c: [255, 120, 0, 220] },
+    { t: 1.00, c: [255, 0, 0, 235] }
+  ];
+
+  for (let i = 0; i < stops.length - 1; i++) {
+    const a = stops[i];
+    const b = stops[i + 1];
+    if (t >= a.t && t <= b.t) {
+      const localT = (t - a.t) / (b.t - a.t);
+      return [
+        Math.round(lerp(a.c[0], b.c[0], localT)),
+        Math.round(lerp(a.c[1], b.c[1], localT)),
+        Math.round(lerp(a.c[2], b.c[2], localT)),
+        Math.round(lerp(a.c[3], b.c[3], localT))
+      ];
+    }
+  }
+
+  return stops[stops.length - 1].c;
+}
+
+function renderProfessionalHeatmap(fixations) {
   clearHeatmap();
-  if (!fixationData.length) return;
+  if (!fixations.length) return;
 
-  const maxDuration = Math.max(...fixationData.map((f) => f.duration), 1);
+  const off = document.createElement("canvas");
+  off.width = canvas.width;
+  off.height = canvas.height;
+  const offCtx = off.getContext("2d");
 
-  fixationData.forEach((f) => {
-    const ratio = f.duration / maxDuration;
-    const colors = getColorsForRatio(ratio);
+  const maxWeight = Math.max(...fixations.map((f) => f.weight), 1);
 
-    const radius = HEAT_RADIUS + Math.min(18, ratio * 12);
+  fixations.forEach((f) => {
+    const ratio = f.weight / maxWeight;
 
-    drawBlob(f.x, f.y, radius, colors.center, colors.mid);
-    drawBlob(
-      f.x,
-      f.y,
-      radius * 0.55,
-      colors.center.replace(/0\.\d+\)/, "0.92)"),
-      colors.mid.replace(/0\.\d+\)/, "0.52)")
+    const radius = Math.round(
+      BASE_HEAT_RADIUS + Math.min(MAX_EXTRA_RADIUS, ratio * MAX_EXTRA_RADIUS)
     );
+
+    const alphaStrength = 0.7 + ratio * 1.6;
+    const stamp = createAlphaStamp(radius, alphaStrength);
+
+    offCtx.drawImage(stamp, f.x - radius, f.y - radius);
+
+    // Refuerzo del núcleo para que haya centros más cálidos
+    const coreRadius = Math.round(radius * 0.42);
+    const coreStamp = createAlphaStamp(coreRadius, 1.2 + ratio * 2.0);
+    offCtx.drawImage(coreStamp, f.x - coreRadius, f.y - coreRadius);
   });
+
+  const imageData = offCtx.getImageData(0, 0, off.width, off.height);
+  const data = imageData.data;
+
+  let maxAlpha = 1;
+  for (let i = 3; i < data.length; i += 4) {
+    if (data[i] > maxAlpha) maxAlpha = data[i];
+  }
+
+  for (let i = 0; i < data.length; i += 4) {
+    const alpha = data[i + 3];
+    if (alpha === 0) continue;
+
+    let t = alpha / maxAlpha;
+
+    // Curva para ampliar zonas medias y evitar solo manchas duras
+    t = Math.pow(t, 0.78);
+
+    const [r, g, b, a] = colorAt(t);
+    data[i] = r;
+    data[i + 1] = g;
+    data[i + 2] = b;
+    data[i + 3] = a;
+  }
+
+  ctx.putImageData(imageData, 0, 0);
 }
 
 stimulus.addEventListener("load", resizeCanvas);
@@ -243,8 +277,7 @@ wrapper.addEventListener("mouseleave", () => {
 startBtn.addEventListener("click", () => {
   tracking = true;
   rawData = [];
-  fixationCandidates = [];
-  fixations = [];
+  weightedPoints = [];
   lastPoint = null;
   clusterStartTime = null;
   clusterPoints = [];
@@ -260,21 +293,20 @@ showBtn.addEventListener("click", () => {
 
   finalizeCluster(performance.now());
 
-  const mergedFixations = mergeNearbyFixations(fixations, 32);
+  const merged = mergeNearbyFixations(weightedPoints, MERGE_RADIUS);
 
-  if (!mergedFixations.length) {
-    alert("No se detectaron fijaciones suficientes. Muévete más lento o haz pausas más claras.");
+  if (!merged.length) {
+    alert("No se detectaron zonas suficientes. Haz pausas cortas sobre distintas áreas.");
     return;
   }
 
-  drawHeatmapFromFixations(mergedFixations);
+  renderProfessionalHeatmap(merged);
 });
 
 clearBtn.addEventListener("click", () => {
   tracking = false;
   rawData = [];
-  fixationCandidates = [];
-  fixations = [];
+  weightedPoints = [];
   lastPoint = null;
   clusterStartTime = null;
   clusterPoints = [];
@@ -284,13 +316,14 @@ clearBtn.addEventListener("click", () => {
 downloadBtn.addEventListener("click", () => {
   finalizeCluster(performance.now());
 
+  const merged = mergeNearbyFixations(weightedPoints, MERGE_RADIUS);
+
   const data = {
     image: stimulus.getAttribute("src"),
     timestamp: new Date().toISOString(),
     raw_mouse_data: rawData,
-    fixation_candidates: fixationCandidates,
-    accepted_fixations: fixations,
-    merged_fixations: mergeNearbyFixations(fixations, 50)
+    fixation_like_points: weightedPoints,
+    merged_attention_areas: merged
   };
 
   const blob = new Blob([JSON.stringify(data, null, 2)], {
@@ -300,7 +333,7 @@ downloadBtn.addEventListener("click", () => {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "mouse_fixation_heatmap_data.json";
+  a.download = "mouse_professional_heatmap_data.json";
   a.click();
   URL.revokeObjectURL(url);
 });
