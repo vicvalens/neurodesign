@@ -11,6 +11,10 @@ const downloadBtn = document.getElementById("downloadBtn");
 let tracking = false;
 let rawData = [];
 
+// Ajustes visuales y de agregación
+const GRID_SIZE = 14;   // menor = más concentración visual
+const RADIUS = 24;      // menor = manchas más marcadas
+
 function resizeCanvas() {
   const w = stimulus.clientWidth;
   const h = stimulus.clientHeight;
@@ -19,8 +23,8 @@ function resizeCanvas() {
 
   canvas.width = w;
   canvas.height = h;
-  canvas.style.width = w + "px";
-  canvas.style.height = h + "px";
+  canvas.style.width = `${w}px`;
+  canvas.style.height = `${h}px`;
 }
 
 function getRelativePosition(event) {
@@ -28,11 +32,14 @@ function getRelativePosition(event) {
   const x = event.clientX - rect.left;
   const y = event.clientY - rect.top;
 
-  if (x < 0 || y < 0 || x > rect.width || y > rect.height) return null;
+  if (x < 0 || y < 0 || x > rect.width || y > rect.height) {
+    return null;
+  }
+
   return { x, y };
 }
 
-function aggregatePoints(data, gridSize = 20) {
+function aggregatePoints(data, gridSize = GRID_SIZE) {
   const map = {};
 
   data.forEach((p) => {
@@ -50,14 +57,39 @@ function aggregatePoints(data, gridSize = 20) {
   return Object.values(map);
 }
 
-function getHeatColor(value, max) {
-  const ratio = value / max;
+function getColorsForRatio(ratio) {
+  if (ratio < 0.25) {
+    return {
+      center: "rgba(0, 0, 255, 0.70)",
+      mid: "rgba(0, 0, 255, 0.35)"
+    };
+  }
 
-  if (ratio < 0.25) return "rgba(0, 0, 255, 0.28)";
-  if (ratio < 0.5) return "rgba(0, 255, 255, 0.30)";
-  if (ratio < 0.7) return "rgba(0, 255, 0, 0.32)";
-  if (ratio < 0.85) return "rgba(255, 255, 0, 0.34)";
-  return "rgba(255, 0, 0, 0.38)";
+  if (ratio < 0.5) {
+    return {
+      center: "rgba(0, 255, 255, 0.75)",
+      mid: "rgba(0, 255, 255, 0.38)"
+    };
+  }
+
+  if (ratio < 0.7) {
+    return {
+      center: "rgba(0, 255, 0, 0.80)",
+      mid: "rgba(0, 255, 0, 0.42)"
+    };
+  }
+
+  if (ratio < 0.85) {
+    return {
+      center: "rgba(255, 255, 0, 0.88)",
+      mid: "rgba(255, 255, 0, 0.48)"
+    };
+  }
+
+  return {
+    center: "rgba(255, 0, 0, 0.95)",
+    mid: "rgba(255, 0, 0, 0.55)"
+  };
 }
 
 function drawHeatmap(points) {
@@ -65,21 +97,30 @@ function drawHeatmap(points) {
 
   if (!points.length) return;
 
-  const maxValue = Math.max(...points.map(p => p.value), 1);
+  const maxValue = Math.max(...points.map((p) => p.value), 1);
 
   points.forEach((p) => {
-    const radius = 35;
-    const gradient = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, radius);
+    const ratio = p.value / maxValue;
+    const colors = getColorsForRatio(ratio);
 
-    const color = getHeatColor(p.value, maxValue);
-    gradient.addColorStop(0, color);
-    gradient.addColorStop(1, "rgba(255,255,255,0)");
+    const gradient = ctx.createRadialGradient(
+      p.x, p.y, 0,
+      p.x, p.y, RADIUS
+    );
+
+    gradient.addColorStop(0, colors.center);
+    gradient.addColorStop(0.45, colors.mid);
+    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
 
     ctx.fillStyle = gradient;
     ctx.beginPath();
-    ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+    ctx.arc(p.x, p.y, RADIUS, 0, Math.PI * 2);
     ctx.fill();
   });
+}
+
+function clearHeatmap() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 }
 
 stimulus.addEventListener("load", resizeCanvas);
@@ -101,7 +142,7 @@ wrapper.addEventListener("mousemove", (event) => {
 startBtn.addEventListener("click", () => {
   tracking = true;
   rawData = [];
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  clearHeatmap();
   alert("Registro iniciado");
 });
 
@@ -111,14 +152,14 @@ showBtn.addEventListener("click", () => {
     return;
   }
 
-  const aggregated = aggregatePoints(rawData, 20);
+  const aggregated = aggregatePoints(rawData, GRID_SIZE);
   drawHeatmap(aggregated);
 });
 
 clearBtn.addEventListener("click", () => {
   tracking = false;
   rawData = [];
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  clearHeatmap();
 });
 
 downloadBtn.addEventListener("click", () => {
