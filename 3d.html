@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <title>Heatmap cubo suave</title>
+  <title>Heatmap acumulativo homogéneo - A-Frame</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <script src="https://aframe.io/releases/1.7.1/aframe.min.js"></script>
 
@@ -10,21 +10,34 @@
     AFRAME.registerComponent('click-heatmap', {
       schema: {
         size: { type: 'int', default: 1024 },
-        pointRadius: { type: 'number', default: 70 }
+        pointRadius: { type: 'number', default: 70 },
+        pointStrength: { type: 'number', default: 0.18 },   // fuerza de cada clic
+        blurSteps: { type: 'int', default: 1 }              // cuántas veces difumina
       },
 
       init: function () {
         const size = this.data.size;
 
-        this.canvas = document.createElement('canvas');
-        this.canvas.width = size;
-        this.canvas.height = size;
-        this.ctx = this.canvas.getContext('2d');
+        // Canvas visible (color final)
+        this.displayCanvas = document.createElement('canvas');
+        this.displayCanvas.width = size;
+        this.displayCanvas.height = size;
+        this.displayCtx = this.displayCanvas.getContext('2d');
 
-        this.ctx.fillStyle = '#bdbdbd';
-        this.ctx.fillRect(0, 0, size, size);
+        // Canvas de intensidad (grises, acumulación real)
+        this.heatCanvas = document.createElement('canvas');
+        this.heatCanvas.width = size;
+        this.heatCanvas.height = size;
+        this.heatCtx = this.heatCanvas.getContext('2d');
 
-        this.texture = new THREE.CanvasTexture(this.canvas);
+        // Fondo base en intensidad = 0
+        this.heatCtx.clearRect(0, 0, size, size);
+
+        // Fondo visual gris claro
+        this.displayCtx.fillStyle = '#bdbdbd';
+        this.displayCtx.fillRect(0, 0, size, size);
+
+        this.texture = new THREE.CanvasTexture(this.displayCanvas);
         this.texture.needsUpdate = true;
 
         this.onClick = this.onClick.bind(this);
@@ -32,6 +45,9 @@
 
         this.el.addEventListener('loaded', this.applyTexture);
         this.el.addEventListener('click', this.onClick);
+
+        // Primer render
+        this.renderHeatmap();
       },
 
       applyTexture: function () {
@@ -58,32 +74,134 @@
         if (!intersection || !intersection.uv) return;
 
         const uv = intersection.uv;
-        const w = this.canvas.width;
-        const h = this.canvas.height;
+        const w = this.heatCanvas.width;
+        const h = this.heatCanvas.height;
 
         const x = uv.x * w;
         const y = (1 - uv.y) * h;
 
         this.addHeatPoint(x, y);
+        this.renderHeatmap();
         this.texture.needsUpdate = true;
       },
 
       addHeatPoint: function (x, y) {
-        const ctx = this.ctx;
+        const ctx = this.heatCtx;
         const r = this.data.pointRadius;
+        const strength = this.data.pointStrength;
 
+        // Mancha suave en escala de grises para acumular intensidad
         const grd = ctx.createRadialGradient(x, y, 0, x, y, r);
-        grd.addColorStop(0.00, 'rgba(255, 0, 0, 0.30)');
-        grd.addColorStop(0.20, 'rgba(255, 120, 0, 0.26)');
-        grd.addColorStop(0.40, 'rgba(255, 255, 0, 0.22)');
-        grd.addColorStop(0.60, 'rgba(0, 255, 180, 0.16)');
-        grd.addColorStop(0.80, 'rgba(0, 140, 255, 0.10)');
-        grd.addColorStop(1.00, 'rgba(0, 0, 255, 0.00)');
+        grd.addColorStop(0.00, `rgba(255,255,255,${strength})`);
+        grd.addColorStop(0.25, `rgba(255,255,255,${strength * 0.75})`);
+        grd.addColorStop(0.50, `rgba(255,255,255,${strength * 0.45})`);
+        grd.addColorStop(0.75, `rgba(255,255,255,${strength * 0.18})`);
+        grd.addColorStop(1.00, 'rgba(255,255,255,0)');
 
         ctx.fillStyle = grd;
         ctx.beginPath();
         ctx.arc(x, y, r, 0, Math.PI * 2);
         ctx.fill();
+      },
+
+      renderHeatmap: function () {
+        const size = this.data.size;
+        const displayCtx = this.displayCtx;
+
+        // Fondo base
+        displayCtx.clearRect(0, 0, size, size);
+        displayCtx.fillStyle = '#bdbdbd';
+        displayCtx.fillRect(0, 0, size, size);
+
+        // Opcional: pequeño blur extra sobre intensidad
+        let sourceCanvas = this.heatCanvas;
+        if (this.data.blurSteps > 0) {
+          const tempCanvas = document.createElement('canvas');
+          tempCanvas.width = size;
+          tempCanvas.height = size;
+          const tempCtx = tempCanvas.getContext('2d');
+
+          tempCtx.clearRect(0, 0, size, size);
+          tempCtx.filter = `blur(${this.data.blurSteps * 2}px)`;
+          tempCtx.drawImage(this.heatCanvas, 0, 0);
+          tempCtx.filter = 'none';
+
+          sourceCanvas = tempCanvas;
+        }
+
+        const srcCtx = sourceCanvas.getContext('2d');
+        const img = srcCtx.getImageData(0, 0, size, size);
+        const data = img.data;
+
+        const out = displayCtx.createImageData(size, size);
+        const outData = out.data;
+
+        const baseR = 189, baseG = 189, baseB = 189;
+
+        for (let i = 0; i < data.length; i += 4) {
+          const intensity = data[i] / 255; // tomamos canal rojo porque está en grises
+
+          // color del heatmap según intensidad
+          const color = this.getHeatColor(intensity);
+
+          // mezcla del color con el fondo base
+          const alpha = color.a;
+          outData[i]     = Math.round(baseR * (1 - alpha) + color.r * alpha);
+          outData[i + 1] = Math.round(baseG * (1 - alpha) + color.g * alpha);
+          outData[i + 2] = Math.round(baseB * (1 - alpha) + color.b * alpha);
+          outData[i + 3] = 255;
+        }
+
+        displayCtx.putImageData(out, 0, 0);
+      },
+
+      getHeatColor: function (t) {
+        // clamp
+        t = Math.max(0, Math.min(1, t));
+
+        // Curva para hacer visibles las zonas suaves
+        const v = Math.pow(t, 0.7);
+
+        // Paleta homogénea: azul -> cian -> verde -> amarillo -> naranja -> rojo
+        let r, g, b, a;
+
+        if (v <= 0.12) {
+          // casi invisible
+          r = 0; g = 0; b = 255;
+          a = v * 1.8;
+        } else if (v <= 0.28) {
+          const k = (v - 0.12) / (0.28 - 0.12);
+          r = 0;
+          g = Math.round(255 * k);
+          b = 255;
+          a = 0.18 + 0.12 * k;
+        } else if (v <= 0.48) {
+          const k = (v - 0.28) / (0.48 - 0.28);
+          r = 0;
+          g = 255;
+          b = Math.round(255 * (1 - k));
+          a = 0.30 + 0.15 * k;
+        } else if (v <= 0.68) {
+          const k = (v - 0.48) / (0.68 - 0.48);
+          r = Math.round(255 * k);
+          g = 255;
+          b = 0;
+          a = 0.45 + 0.12 * k;
+        } else if (v <= 0.84) {
+          const k = (v - 0.68) / (0.84 - 0.68);
+          r = 255;
+          g = Math.round(255 - 90 * k);
+          b = 0;
+          a = 0.57 + 0.12 * k;
+        } else {
+          const k = (v - 0.84) / (1.0 - 0.84);
+          r = 255;
+          g = Math.round(165 * (1 - k));
+          b = 0;
+          a = 0.69 + 0.18 * k;
+        }
+
+        return { r, g, b, a: Math.min(0.92, a) };
       }
     });
   </script>
@@ -106,7 +224,7 @@
       depth="1.2"
       height="1.2"
       width="1.2"
-      click-heatmap="size: 1024; pointRadius: 70">
+      click-heatmap="size: 1024; pointRadius: 80; pointStrength: 0.20; blurSteps: 1">
     </a-box>
   </a-scene>
 </body>
