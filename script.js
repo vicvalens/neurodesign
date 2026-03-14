@@ -12,17 +12,17 @@ let tracking = false;
 let rawData = [];
 
 // Ajustes principales
-const BASE_RADIUS = 34;
-const EXTRA_RADIUS = 16;
+const BASE_RADIUS = 28;
+const EXTRA_RADIUS = 20;
 const MIN_DT = 8;
 const SPEED_LOW = 0.05;
 const SPEED_HIGH = 1.2;
 const STEP_SKIP = 1;
 
 // Menos trayecto, más fijación
-const TRAIL_WEIGHT = 0.00;
-const SLOW_WEIGHT_BOOST = 0.9;
-const STOP_WEIGHT_BOOST = 2.2;
+const TRAIL_WEIGHT = 0.02;
+const SLOW_WEIGHT_BOOST = 1.2;
+const STOP_WEIGHT_BOOST = 3.0;
 
 function resizeCanvas() {
   const w = stimulus.clientWidth;
@@ -60,13 +60,13 @@ function lerp(a, b, t) {
 function colorAt(t) {
   const stops = [
     { t: 0.00, c: [0, 0, 0, 0] },
-    { t: 0.08, c: [35, 60, 255, 38] },
-    { t: 0.22, c: [0, 190, 255, 56] },
-    { t: 0.38, c: [0, 255, 170, 72] },
-    { t: 0.54, c: [60, 255, 60, 88] },
-    { t: 0.72, c: [255, 235, 0, 104] },
-    { t: 0.88, c: [255, 130, 0, 118] },
-    { t: 1.00, c: [255, 0, 0, 130] }
+    { t: 0.08, c: [35, 60, 255, 55] },
+    { t: 0.22, c: [0, 190, 255, 78] },
+    { t: 0.38, c: [0, 255, 170, 102] },
+    { t: 0.54, c: [60, 255, 60, 126] },
+    { t: 0.72, c: [255, 235, 0, 150] },
+    { t: 0.88, c: [255, 130, 0, 170] },
+    { t: 1.00, c: [255, 0, 0, 190] }
   ];
 
   for (let i = 0; i < stops.length - 1; i++) {
@@ -95,10 +95,10 @@ function createAlphaStamp(radius, alphaStrength = 1.0) {
   const sctx = stamp.getContext("2d");
   const gradient = sctx.createRadialGradient(radius, radius, 0, radius, radius, radius);
 
-  gradient.addColorStop(0.0, `rgba(0,0,0,${0.11 * alphaStrength})`);
-  gradient.addColorStop(0.2, `rgba(0,0,0,${0.08 * alphaStrength})`);
-  gradient.addColorStop(0.45, `rgba(0,0,0,${0.05 * alphaStrength})`);
-  gradient.addColorStop(0.75, `rgba(0,0,0,${0.025 * alphaStrength})`);
+  gradient.addColorStop(0.0, `rgba(0,0,0,${0.16 * alphaStrength})`);
+  gradient.addColorStop(0.2, `rgba(0,0,0,${0.12 * alphaStrength})`);
+  gradient.addColorStop(0.45, `rgba(0,0,0,${0.07 * alphaStrength})`);
+  gradient.addColorStop(0.75, `rgba(0,0,0,${0.03 * alphaStrength})`);
   gradient.addColorStop(1.0, "rgba(0,0,0,0)");
 
   sctx.fillStyle = gradient;
@@ -168,14 +168,14 @@ function renderContinuousHeatmap(weightedPoints) {
   weightedPoints.forEach((p) => {
     const ratio = p.weight / maxWeight;
     const radius = Math.round(BASE_RADIUS + ratio * EXTRA_RADIUS);
-    const alphaStrength = 0.35 + ratio * 1.2;
+    const alphaStrength = 0.50 + ratio * 1.45;
 
     const stamp = createAlphaStamp(radius, alphaStrength);
     offCtx.drawImage(stamp, p.x - radius, p.y - radius);
 
     if (ratio > 0.55) {
       const coreRadius = Math.round(radius * 0.38);
-      const coreStamp = createAlphaStamp(coreRadius, 0.9 + ratio * 1.2);
+      const coreStamp = createAlphaStamp(coreRadius, 1.0 + ratio * 1.4);
       offCtx.drawImage(coreStamp, p.x - coreRadius, p.y - coreRadius);
     }
   });
